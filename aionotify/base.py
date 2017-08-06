@@ -7,7 +7,7 @@ import collections
 import ctypes
 import struct
 
-from . import aioutils
+from . import aioutils, enums
 
 Event = collections.namedtuple('Event', ['flags', 'cookie', 'name', 'alias'])
 
@@ -58,6 +58,11 @@ class Watcher:
             # We've started, register the watch immediately.
             self._setup_watch(alias, path, flags)
 
+    def _forget_alias(self, wd):
+        alias = self.aliases.pop(wd)
+        del self.descriptors[alias]
+        del self.requests[alias]
+
     def unwatch(self, alias):
         """Stop watching a given rule."""
         if alias not in self.descriptors:
@@ -66,9 +71,7 @@ class Watcher:
         errno = LibC.inotify_rm_watch(self._fd, wd)
         if errno != 0:
             raise IOError("Failed to close watcher %d: errno=%d" % (wd, errno))
-        del self.descriptors[alias]
-        del self.requests[alias]
-        del self.aliases[wd]
+        self._forget_alias(wd)
 
     def _setup_watch(self, alias, path, flags):
         """Actual rule setup."""
@@ -125,9 +128,14 @@ class Watcher:
                 continue
 
             decoded_path = struct.unpack('%ds' % length, path)[0].rstrip(b'\x00').decode('utf-8')
+            alias = self.aliases[wd]
+
+            if flags & enums.Flags.IGNORED:
+                self._forget_alias(wd)
+
             return Event(
                 flags=flags,
                 cookie=cookie,
                 name=decoded_path,
-                alias=self.aliases[wd],
+                alias=alias,
             )
